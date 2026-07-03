@@ -1,11 +1,15 @@
 import * as THREE from 'three';
 import { clamp } from './noise';
 import { heightAt, WORLD_RADIUS } from '../world/Terrain';
+import type { Collider } from '../world/Flora';
 import type { Input } from './Input';
 
 const MAX_SPEED = 5.4;
 const ACCEL = 22;
 const DRAG = 3.0;
+const BODY_R = 0.45; // カメラ(=体)の半径
+// 地形めり込み防止の周辺サンプル(斜面対策)
+const FLOOR_SAMPLES: [number, number][] = [[0.55, 0], [-0.55, 0], [0, 0.55], [0, -0.55]];
 
 export class Player {
   readonly camera: THREE.PerspectiveCamera;
@@ -14,6 +18,8 @@ export class Player {
   pitch = 0;
   private roll = 0;
   depthLimit = 32;
+  /** 大型オブジェクトの球コライダー(Floraが生成) */
+  colliders: Collider[] = [];
   onLimitWarn?: () => void;
   onBoundsWarn?: () => void;
   private warnCd = 0;
@@ -64,10 +70,40 @@ export class Player {
     this.position.addScaledVector(this.velocity, dt);
 
     // 地形・水面・可潜深度・ワールド境界
-    const floorY = heightAt(this.position.x, this.position.z) + 0.9;
+    // 足元 + 周辺4点をサンプリングして斜面へのめり込みを防ぐ
+    let floorY = heightAt(this.position.x, this.position.z) + 0.9;
+    for (const [ox, oz] of FLOOR_SAMPLES) {
+      const f = heightAt(this.position.x + ox, this.position.z + oz) + 0.55;
+      if (f > floorY) floorY = f;
+    }
     if (this.position.y < floorY) {
       this.position.y = floorY;
       if (this.velocity.y < 0) this.velocity.y = 0;
+    }
+
+    // 大型オブジェクト(岩・サンゴ塔・遺跡など)から押し出す
+    for (const c of this.colliders) {
+      const rr = c.r + BODY_R;
+      const dx = this.position.x - c.x;
+      if (dx > rr || dx < -rr) continue;
+      const dz = this.position.z - c.z;
+      if (dz > rr || dz < -rr) continue;
+      const dy = this.position.y - c.y;
+      if (dy > rr || dy < -rr) continue;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 >= rr * rr || d2 < 1e-8) continue;
+      const d = Math.sqrt(d2);
+      const push = (rr - d) / d;
+      this.position.x += dx * push;
+      this.position.y += dy * push;
+      this.position.z += dz * push;
+      // 法線方向の進入速度を打ち消す(滑る挙動になる)
+      const vn = (this.velocity.x * dx + this.velocity.y * dy + this.velocity.z * dz) / d;
+      if (vn < 0) {
+        this.velocity.x -= (vn * dx) / d;
+        this.velocity.y -= (vn * dy) / d;
+        this.velocity.z -= (vn * dz) / d;
+      }
     }
     if (this.position.y > -0.45) {
       this.position.y = -0.45;

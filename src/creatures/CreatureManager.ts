@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { SPECIES, ZONE_RADIUS, type SpeciesDef } from './SpeciesData';
-import { fishInstanced } from './FishFactory';
+import { SPECIES, SPECIES_BY_ID, ZONE_RADIUS, type SpeciesDef } from './SpeciesData';
+import { fishInstanced, fishMesh } from './FishFactory';
 import { buildSpecial, type SpecialCreature } from './SpecialFactory';
 import { heightAt } from '../world/Terrain';
 import { clamp, fbm2, pick, rand, randInt } from '../core/noise';
@@ -52,6 +52,24 @@ interface Single {
   event?: { curve: THREE.QuadraticBezierCurve3; t: number; dur: number };
 }
 
+/** サメ襲撃の状態機械 */
+type PredatorPhase = 'stalk' | 'charge' | 'retreat' | 'leave';
+
+interface PredatorState {
+  def: SpeciesDef;
+  mesh: THREE.Mesh;
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  quat: THREE.Quaternion;
+  phase: PredatorPhase;
+  timer: number;
+  orbitR: number;
+  angle: number;
+  attacks: number;
+  maxAttacks: number;
+  hitCd: number;
+}
+
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
@@ -99,6 +117,15 @@ export class CreatureManager {
   debugMode = false;
   private eventCycle = 0;
   onEvent?: (def: SpeciesDef) => void;
+
+  // ─── サメ襲撃 ───
+  private predator: PredatorState | null = null;
+  private predatorRoll = 20;
+  private predatorCooldown = 75; // 開始直後は襲われない
+  onPredatorWarn?: (def: SpeciesDef) => void;
+  /** ヒット時。dir はサメ→プレイヤー方向(ノックバックに使う) */
+  onPredatorHit?: (dir: THREE.Vector3) => void;
+  onPredatorGone?: (escaped: boolean) => void;
 
   constructor(scene: THREE.Scene, anchors: Anchors) {
     this.scene = scene;
@@ -178,6 +205,169 @@ export class CreatureManager {
     for (const single of this.singles) this.updateSingle(single, dt, t, playerPos, playerSpeed);
     this.updateEvent(dt, playerPos);
     this.rollEvents(dt, playerPos);
+    this.updatePredator(dt, playerPos);
+    this.rollPredator(dt, playerPos);
+  }
+
+  // ─────────── サメ襲撃 ───────────
+  /** 深海・沖に長居すると低確率でホホジロザメに狙われる */
+  private rollPredator(dt: number, playerPos: THREE.Vector3): void {
+    this.predatorCooldown = Math.max(0, this.predatorCooldown - dt);
+    this.predatorRoll -= dt;
+    if (this.predatorRoll > 0) return;
+    this.predatorRoll = 8;
+    if (this.predator || this.predatorCooldown > 0) return;
+
+    const depth = -playerPos.y;
+    const r = Math.hypot(playerPos.x, playerPos.z);
+    const inDeep = depth > 78;
+    const inFar = r > 185 && depth > 18;
+    if (!inDeep && !inFar) return;
+    const chance = this.debugMode ? 0.55 : inDeep && inFar ? 0.09 : 0.045;
+    if (Math.random() > chance) return;
+    this.spawnPredator(playerPos);
+  }
+
+  /** デバッグ用: サメ襲撃を即時開始 */
+  forcePredator(playerPos: THREE.Vector3): SpeciesDef | null {
+    if (this.predator) return null;
+    return this.spawnPredator(playerPos);
+  }
+
+  private spawnPredator(playerPos: THREE.Vector3): SpeciesDef {
+    const def = SPECIES_BY_ID.get('great_white')!;
+    const mesh = fishMesh(def);
+    const angle = rand(0, Math.PI * 2);
+    const orbitR = 44;
+    // サメは下方から現れる
+    const pos = new THREE.Vector3(
+      playerPos.x + Math.cos(angle) * orbitR,
+      Math.max(playerPos.y - 9, heightAt(playerPos.x, playerPos.z) + 2),
+      playerPos.z + Math.sin(angle) * orbitR
+    );
+    mesh.position.copy(pos);
+    this.scene.add(mesh);
+    this.predator = {
+      def, mesh, pos,
+      vel: new THREE.Vector3(), quat: new THREE.Quaternion(),
+      phase: 'stalk', timer: rand(9, 14), orbitR, angle,
+      attacks: 0, maxAttacks: randInt(2, 3), hitCd: 0,
+    };
+    this.onPredatorWarn?.(def);
+    return def;
+  }
+
+  private predatorSeek(p: PredatorState, target: THREE.Vector3, speed: number, turn: number, dt: number): void {
+    _v1.copy(target).sub(p.pos);
+    if (_v1.lengthSq() > 1e-6) {
+      _v1.setLength(speed);
+      p.vel.lerp(_v1, 1 - Math.exp(-dt * turn));
+    }
+    p.pos.addScaledVector(p.vel, dt);
+    const floor = heightAt(p.pos.x, p.pos.z);
+    if (p.pos.y < floor + 1.4) p.pos.y = floor + 1.4;
+    if (p.pos.y > -1.8) p.pos.y = -1.8;
+  }
+
+  private updatePredator(dt: number, playerPos: THREE.Vector3): void {
+    const p = this.predator;
+    if (!p) return;
+    p.hitCd = Math.max(0, p.hitCd - dt);
+    const dist = p.pos.distanceTo(playerPos);
+
+    // 浅瀬のサンゴ礁まで戻れば安全
+    const pDepth = -playerPos.y;
+    const pr = Math.hypot(playerPos.x, playerPos.z);
+    if (p.phase !== 'leave' && pDepth < 26 && pr < 92) {
+      p.phase = 'leave';
+      this.onPredatorGone?.(true);
+    }
+
+    switch (p.phase) {
+      case 'stalk': {
+        // プレイヤーの周りを旋回しながら距離を詰める
+        p.angle += dt * (p.def.speed * 1.25) / Math.max(p.orbitR, 8);
+        p.orbitR = Math.max(p.orbitR - dt * 2.4, 13);
+        _v2.set(
+          playerPos.x + Math.cos(p.angle) * p.orbitR,
+          playerPos.y - 2 + Math.sin(p.angle * 0.7) * 3,
+          playerPos.z + Math.sin(p.angle) * p.orbitR
+        );
+        this.predatorSeek(p, _v2, p.def.speed * 1.1, 2.4, dt);
+        p.timer -= dt;
+        if (p.timer <= 0 || p.orbitR <= 13.5) {
+          p.phase = 'charge';
+          p.timer = 5;
+        }
+        break;
+      }
+      case 'charge': {
+        // 突進(緩いホーミング)。回避の余地を残す
+        this.predatorSeek(p, playerPos, p.def.speed * 2.3, 1.7, dt);
+        if (dist < 2.3 && p.hitCd <= 0) {
+          p.attacks++;
+          p.hitCd = 2;
+          _v3.copy(playerPos).sub(p.pos).normalize();
+          this.onPredatorHit?.(_v3.clone());
+          p.phase = 'retreat';
+          p.timer = rand(4, 6);
+        } else {
+          p.timer -= dt;
+          if (p.timer <= 0) {
+            p.phase = 'retreat';
+            p.timer = rand(3, 5);
+          }
+        }
+        break;
+      }
+      case 'retreat': {
+        _v2.copy(p.pos).sub(playerPos);
+        _v2.y *= 0.3;
+        if (_v2.lengthSq() < 1) _v2.set(1, 0, 0);
+        _v2.setLength(60).add(p.pos);
+        this.predatorSeek(p, _v2, p.def.speed * 1.5, 2.0, dt);
+        p.timer -= dt;
+        if (p.timer <= 0 || dist > 46) {
+          if (p.attacks >= p.maxAttacks) {
+            p.phase = 'leave';
+            this.onPredatorGone?.(false);
+          } else {
+            p.phase = 'stalk';
+            p.timer = rand(6, 10);
+            p.orbitR = Math.max(dist, 30);
+            p.angle = Math.atan2(p.pos.z - playerPos.z, p.pos.x - playerPos.x);
+          }
+        }
+        break;
+      }
+      case 'leave': {
+        _v2.copy(p.pos).sub(playerPos);
+        _v2.y = -4;
+        if (_v2.lengthSq() < 1) _v2.set(1, 0, -1);
+        _v2.setLength(80).add(p.pos);
+        this.predatorSeek(p, _v2, p.def.speed * 1.3, 1.6, dt);
+        if (dist > 95) this.despawnPredator();
+        break;
+      }
+    }
+
+    if (!this.predator) return;
+    if (p.vel.lengthSq() > 0.001) {
+      quatFromDir(p.vel, _q);
+      p.quat.slerp(_q, 1 - Math.exp(-dt * 3.5));
+    }
+    p.mesh.position.copy(p.pos);
+    p.mesh.quaternion.copy(p.quat);
+  }
+
+  private despawnPredator(): void {
+    const p = this.predator;
+    if (!p) return;
+    this.scene.remove(p.mesh);
+    p.mesh.geometry.dispose();
+    (p.mesh.material as THREE.Material).dispose();
+    this.predator = null;
+    this.predatorCooldown = this.debugMode ? 20 : 150;
   }
 
   // ─────────── 群れ(Boids) ───────────
@@ -381,7 +571,7 @@ export class CreatureManager {
 
     if (this.debugMode) {
       // デバッグ: 深度や確率を無視してイベント種を順番に出す
-      const events = SPECIES.filter((d) => d.mode === 'event');
+      const events = SPECIES.filter((d) => d.mode === 'event' && !d.predator);
       if (events.length > 0) {
         this.spawnEvent(events[this.eventCycle++ % events.length], playerPos, true);
       }
@@ -400,7 +590,7 @@ export class CreatureManager {
 
   /** デバッグ用: 次のイベント種を即時出現させる */
   forceEvent(playerPos: THREE.Vector3): SpeciesDef | null {
-    const events = SPECIES.filter((d) => d.mode === 'event');
+    const events = SPECIES.filter((d) => d.mode === 'event' && !d.predator);
     if (events.length === 0) return null;
     if (this.eventActive) this.despawnEvent();
     const def = events[this.eventCycle++ % events.length];
@@ -495,6 +685,11 @@ export class CreatureManager {
     };
     for (const s of this.singles) pushSingle(s);
     if (this.eventActive) pushSingle(this.eventActive);
+    if (this.predator) {
+      const p = this.predator;
+      fwd.set(0, 0, 1).applyQuaternion(p.quat);
+      out.push({ def: p.def, pos: p.pos, forward: fwd.clone(), radius: p.def.length * 0.55 });
+    }
     return out;
   }
 }

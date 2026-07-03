@@ -49,7 +49,18 @@ export function fbm2(x: number, y: number, octaves = 4): number {
   return sum / norm;
 }
 
-let seedCounter = 1;
+/** シード付きPRNG(mulberry32)。地形生成など再現性が欲しい場所で使う */
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 /** 再現性不要の簡易乱数(ロジック用) */
 export function rand(min = 0, max = 1): number {
   return min + Math.random() * (max - min);

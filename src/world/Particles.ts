@@ -47,8 +47,8 @@ export class Particles {
   private bubbles: { x: number; y: number; z: number; vy: number; life: number; active: boolean }[] = [];
 
   constructor(scene: THREE.Scene) {
-    this.snow = makeWrapPoints(1100, 70, 0.06, '#dfeeff', 0.22, 'snow');
-    this.motes = makeWrapPoints(500, 46, 0.035, '#c9ecd2', 0.02, 'motes');
+    this.snow = makeWrapPoints(1700, 70, 0.06, '#dfeeff', 0.22, 'snow');
+    this.motes = makeWrapPoints(850, 46, 0.035, '#c9ecd2', 0.02, 'motes');
     scene.add(this.snow.points, this.motes.points);
 
     // 泡(ダイバーの呼気)
@@ -84,7 +84,7 @@ export class Particles {
     this.snow.center.value.copy(playerPos);
     this.motes.center.value.copy(playerPos);
     const d = Math.max(0, -playerPos.y);
-    this.snow.mat.opacity = 0.15 + 0.6 * smoothstep(28, 70, d);
+    this.snow.mat.opacity = 0.06 + 0.66 * smoothstep(28, 70, d);
     this.motes.mat.opacity = 0.5 * Math.exp(-d / 22) + 0.04;
 
     for (let i = 0; i < this.bubbles.length; i++) {

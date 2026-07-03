@@ -3,7 +3,7 @@ import { clamp, smoothstep } from '../core/noise';
 import { uTime } from '../core/uniforms';
 
 // 深度帯ごとの水の色
-const WATER_SHALLOW = new THREE.Color('#1b6f96');
+const WATER_SHALLOW = new THREE.Color('#15628c');
 const WATER_MID = new THREE.Color('#0b3d63');
 const WATER_DEEP = new THREE.Color('#041625');
 const WATER_ABYSS = new THREE.Color('#02070d');
@@ -210,11 +210,12 @@ export class Environment {
   private buildGodrays(): THREE.Group {
     const group = new THREE.Group();
     const geo = new THREE.PlaneGeometry(9, 46);
-    for (let i = 0; i < 16; i++) {
-      const m = new THREE.Mesh(geo, this.godrayMat);
-      const r = 10 + Math.random() * 92;
+    const geoWide = new THREE.PlaneGeometry(16, 60);
+    for (let i = 0; i < 30; i++) {
+      const m = new THREE.Mesh(i % 3 === 0 ? geoWide : geo, this.godrayMat);
+      const r = 8 + Math.random() * 105;
       const th = Math.random() * Math.PI * 2;
-      m.position.set(Math.cos(th) * r, -23, Math.sin(th) * r);
+      m.position.set(Math.cos(th) * r, i % 3 === 0 ? -28 : -23, Math.sin(th) * r);
       m.rotation.set(0, Math.random() * Math.PI, 0.1 + Math.random() * 0.08);
       m.frustumCulled = false;
       group.add(m);

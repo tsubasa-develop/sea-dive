@@ -38,11 +38,19 @@ export class Game {
   private progress = new Progress();
   private ui: UI;
   private ambience = new Ambience();
+  /** 検証・デバッグ用に公開 */
+  readonly flora: Flora;
   private composer: EffectComposer;
   private exhaleTimer = 3;
   private started = false;
+  private paused = false;
   private shooting = false;
-  private debug = false;
+  private shakeT = 0;
+
+  /** 探索操作を受け付ける状態か */
+  private get playing(): boolean {
+    return this.started && !this.paused && !this.ui.modalOpen;
+  }
 
   constructor(root: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -62,10 +70,11 @@ export class Game {
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.composer.addPass(new UnrealBloomPass(
-      new THREE.Vector2(window.innerWidth, window.innerHeight), 0.38, 0.5, 0.85
+      new THREE.Vector2(window.innerWidth, window.innerHeight), 0.46, 0.55, 0.82
     ));
     this.composer.addPass(new OutputPass());
     const flora = new Flora(this.scene);
+    this.flora = flora;
     this.particles = new Particles(this.scene);
     this.manager = new CreatureManager(this.scene, {
       anemones: flora.anemones,
@@ -76,7 +85,10 @@ export class Game {
 
     this.input = new Input(this.renderer.domElement);
     this.player = new Player(this.camera);
-    this.player.depthLimit = this.progress.depthLimit;
+    this.player.colliders = flora.colliders;
+    // フリー探索モード: 深度制限なし・イベント高頻度
+    this.player.depthLimit = 999;
+    this.manager.debugMode = true;
     this.ui = new UI(root);
     void this.album.open();
 
@@ -91,32 +103,12 @@ export class Game {
     this.ui.onStart = () => {
       this.ambience.start();
       this.started = true;
-      this.input.requestLock();
-    };
-    this.ui.onStartDebug = () => {
-      this.debug = true;
-      this.manager.debugMode = true;
-      this.player.depthLimit = 999;
+      this.paused = false;
+      this.ui.hideTitle();
       this.ui.setDebug(true);
-      this.ambience.start();
-      this.started = true;
-      this.input.requestLock();
-      this.ui.toast('[DEBUG] イベント高頻度モード · 1/2/3 テレポート · E 召喚', 'warn');
-    };
-    this.renderer.domElement.addEventListener('click', () => {
-      if (this.started && !this.input.locked && !this.ui.modalOpen) this.input.requestLock();
-    });
-    this.input.onLockChange = (locked) => {
-      if (locked) {
-        this.ui.hideTitle();
-      } else if (!this.ui.modalOpen) {
-        // ポインタロック解除(ESC等) → ポーズ
-        if (this.photo.active) this.exitPhotoMode();
-        this.ui.showTitle(true);
-      }
     };
     this.input.onShoot = () => {
-      if (this.photo.active) void this.shoot();
+      if (this.playing && this.photo.active) void this.shoot();
     };
     this.input.onWheel = (dy) => {
       this.photo.wheel(dy, this.camera);
@@ -128,6 +120,22 @@ export class Game {
       this.ui.toast(def.eventLine ?? '…何かが近づいてくる', 'rare');
       this.ambience.rare();
     };
+    // サメ襲撃
+    this.manager.onPredatorWarn = () => {
+      this.ui.toast('!! 巨大な捕食者の気配…浅瀬のサンゴ礁へ逃げ込め!', 'danger');
+      this.ambience.danger();
+    };
+    this.manager.onPredatorHit = (dir) => {
+      // ノックバック + 赤フラッシュ + シェイク
+      this.player.velocity.addScaledVector(dir, 9);
+      this.player.velocity.y += 2.2;
+      this.ui.damage();
+      this.ambience.bite();
+      this.shakeT = 0.7;
+    };
+    this.manager.onPredatorGone = (escaped) => {
+      this.ui.toast(escaped ? 'サメは深みへ消えていった…助かった' : 'サメは興味を失い、去っていった', 'info');
+    };
     this.player.onLimitWarn = () => {
       this.ui.toast(`これ以上は潜れない(可潜深度 ${this.player.depthLimit}m)。図鑑を増やして解放しよう`, 'warn');
     };
@@ -135,32 +143,33 @@ export class Game {
 
     this.ui.onResetProgress = () => {
       this.progress.reset();
-      this.player.depthLimit = this.progress.depthLimit;
       this.ui.closeModals();
       this.ui.toast('図鑑と進行状況をリセットしました');
     };
     this.ui.onDeletePhoto = (id) => {
       void this.album.remove(id).then(() => this.openAlbum());
     };
-    this.ui.onModalClosed = () => this.input.requestLock();
   }
 
   private handleKey(code: string): void {
     if (!this.started) return;
-    if (this.debug && this.input.locked) {
+    if (this.playing) {
       if (code === 'Digit1') this.teleport(24, -6, 24);
       else if (code === 'Digit2') this.teleport(0, -52, 122);
       else if (code === 'Digit3') this.teleport(-165, -116, 96);
       else if (code === 'KeyE') {
         const def = this.manager.forceEvent(this.player.position);
-        if (def) this.ui.toast(`[DEBUG] ${def.name} を召喚`, 'rare');
+        if (def) this.ui.toast(`${def.name} を召喚`, 'rare');
+      } else if (code === 'KeyG') {
+        const def = this.manager.forcePredator(this.player.position);
+        if (def) this.ui.toast(`${def.name} 襲撃開始`, 'warn');
       }
     }
     switch (code) {
       case 'KeyC':
-        if (this.ui.modalOpen) break;
+        if (this.ui.modalOpen || this.paused) break;
         if (this.photo.active) this.exitPhotoMode();
-        else if (this.input.locked) {
+        else {
           this.photo.enter(this.camera);
           this.ui.setCameraMode(true);
           this.ui.setZoom(this.photo.zoomRatio);
@@ -183,7 +192,16 @@ export class Game {
         this.toggleModal('album');
         break;
       case 'Escape':
-        if (this.ui.closeModals()) this.input.requestLock();
+        if (this.ui.closeModals()) break;
+        // モーダルが開いていなければポーズをトグル
+        if (this.paused) {
+          this.paused = false;
+          this.ui.hideTitle();
+        } else {
+          if (this.photo.active) this.exitPhotoMode();
+          this.paused = true;
+          this.ui.showTitle(true);
+        }
         break;
     }
   }
@@ -191,11 +209,10 @@ export class Game {
   private toggleModal(kind: 'dex' | 'album'): void {
     if (this.ui.modalOpen) {
       this.ui.closeModals();
-      this.input.requestLock();
       return;
     }
+    if (this.paused) return;
     if (this.photo.active) this.exitPhotoMode();
-    this.input.exitLock();
     if (kind === 'dex') void this.openDex();
     else this.openAlbum();
   }
@@ -244,10 +261,7 @@ export class Game {
         this.ambience.discovery();
         for (const s of res.newSpecies) this.ui.toast(`✦ 図鑑に登録: ${s.name}`, 'new');
       }
-      if (res.unlocked) {
-        if (!this.debug) this.player.depthLimit = res.unlocked.limit;
-        this.ui.unlockBanner(res.unlocked.label, res.unlocked.limit);
-      }
+      // フリー探索モードでは深度は常に無制限(解放演出は不要)
     } finally {
       this.shooting = false;
     }
@@ -264,9 +278,16 @@ export class Game {
     const dt = clamp(this.clock.getDelta(), 0, 0.05);
     uTime.value += dt;
     const t = uTime.value;
-    const playing = this.input.locked && !this.ui.modalOpen;
+    const playing = this.playing;
 
     this.player.update(dt, this.input, playing);
+    // 被弾シェイク
+    if (this.shakeT > 0) {
+      this.shakeT = Math.max(0, this.shakeT - dt);
+      const k = this.shakeT * 0.09;
+      this.camera.rotation.x += (Math.random() - 0.5) * k;
+      this.camera.rotation.z += (Math.random() - 0.5) * k;
+    }
     const pos = this.player.position;
     const depth = Math.max(0, -pos.y);
 

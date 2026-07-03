@@ -141,6 +141,23 @@ export class Ambience {
     osc.stop(t0 + 3);
   }
 
+  /** サメ襲撃の予兆(低音の二音オスティナート) */
+  danger(): void {
+    if (!this.ctx || !this.master) return;
+    for (let i = 0; i < 6; i++) {
+      const f = i % 2 === 0 ? 41.2 : 43.7; // E1 / F1
+      this.tone(f, i * 0.42, 0.4, 0.16, 'triangle');
+      this.tone(f * 2, i * 0.42, 0.3, 0.05, 'sawtooth');
+    }
+  }
+
+  /** 噛みつき・衝撃 */
+  bite(): void {
+    this.noiseBurst(0, 0.25, 180, 0.8, 0.5);
+    this.noiseBurst(0.02, 0.5, 90, 1.2, 0.4);
+    this.tone(38, 0, 0.7, 0.3, 'sine');
+  }
+
   toggleMute(): boolean {
     this.muted = !this.muted;
     if (this.master && this.ctx) {

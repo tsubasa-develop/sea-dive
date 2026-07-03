@@ -23,24 +23,250 @@ export function buildSpecial(def: SpeciesDef): SpecialCreature {
     case 'octopus': return buildOctopus(def);
     case 'sunfish': return buildSunfish(def);
     case 'whale': return buildWhale(def);
+    case 'gardenEel': return buildGardenEel(def);
+    case 'clione': return buildClione(def);
+    case 'squid': return buildSquid(def);
+    case 'shadow': return buildShadow(def);
   }
+}
+
+/** ダイオウイカ。外套膜を先頭に、長い触腕を引いて泳ぐ */
+function buildSquid(def: SpeciesDef): SpecialCreature {
+  const L = def.length;
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: '#9a3226', roughness: 0.55, metalness: 0.05 });
+  const pale = new THREE.MeshStandardMaterial({ color: '#c8705a', roughness: 0.6 });
+
+  // 外套膜(前方へ伸びる円錐)
+  const mantle = new THREE.Mesh(new THREE.ConeGeometry(L * 0.075, L * 0.5, 12), mat);
+  mantle.rotation.x = Math.PI / 2;
+  mantle.position.z = L * 0.28;
+  g.add(mantle);
+  // 先端のひれ(菱形)
+  const fins = new THREE.Mesh(new THREE.CircleGeometry(L * 0.13, 4), mat);
+  fins.rotation.z = Math.PI / 4;
+  fins.position.z = L * 0.44;
+  g.add(fins);
+  // 頭部
+  const head = new THREE.Mesh(new THREE.SphereGeometry(L * 0.06, 10, 8), mat);
+  head.position.z = L * 0.02;
+  head.scale.set(1, 1, 1.2);
+  g.add(head);
+  // 巨大な目(動物界最大)
+  const eyeMat = new THREE.MeshStandardMaterial({
+    color: '#101418', emissive: '#3a5868', emissiveIntensity: 0.5, roughness: 0.2,
+  });
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(L * 0.026, 10, 8), eyeMat);
+    eye.position.set(side * L * 0.052, 0, L * 0.03);
+    g.add(eye);
+  }
+  // 8本の腕(後方へ)
+  const armsGroup = new THREE.Group();
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const dx = Math.cos(a), dy = Math.sin(a);
+    const curve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(dx * L * 0.03, dy * L * 0.03, -L * 0.02),
+      new THREE.Vector3(dx * L * 0.06, dy * L * 0.06, -L * 0.16),
+      new THREE.Vector3(dx * L * 0.045, dy * L * 0.045, -L * 0.3),
+      new THREE.Vector3(dx * L * 0.02, dy * L * 0.02, -L * 0.4),
+    ]);
+    armsGroup.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 10, L * 0.011, 6), pale));
+  }
+  // 2本の長い触腕(先端にクラブ)
+  for (const side of [-1, 1]) {
+    const curve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(side * L * 0.02, -L * 0.01, -L * 0.02),
+      new THREE.Vector3(side * L * 0.07, -L * 0.05, -L * 0.28),
+      new THREE.Vector3(side * L * 0.05, -L * 0.02, -L * 0.52),
+      new THREE.Vector3(side * L * 0.06, L * 0.01, -L * 0.62),
+    ]);
+    armsGroup.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 12, L * 0.007, 6), pale));
+    const club = new THREE.Mesh(new THREE.SphereGeometry(L * 0.018, 8, 6), pale);
+    club.position.set(side * L * 0.06, L * 0.01, -L * 0.62);
+    club.scale.set(1, 1, 2.2);
+    armsGroup.add(club);
+  }
+  g.add(armsGroup);
+
+  const phase = rand(0, Math.PI * 2);
+  return {
+    object: g,
+    update: (dt, t) => {
+      armsGroup.rotation.z = Math.sin(t * 0.7 + phase) * 0.12;
+      armsGroup.rotation.x = Math.cos(t * 0.55 + phase) * 0.06;
+      mantle.scale.x = mantle.scale.y = 1 + Math.sin(t * 1.6 + phase) * 0.05; // 外套膜の脈動
+    },
+  };
+}
+
+/** 「ヌシ」— 霧の向こうを横切る正体不明の巨大な黒い魚影 */
+function buildShadow(def: SpeciesDef): SpecialCreature {
+  const L = def.length;
+  const p = resolveParams({
+    base: '#000000', height: 0.24, width: 0.15, noseK: 0.58,
+    tailSpan: 0.42, tailLen: 0.22, tailFork: 0.5, dorsalH: 0.13, analH: 0.06,
+    scales: false, swimFreq: 0.5, swimAmp: L * 0.028,
+  }, L);
+  const geo = makeFishGeometry(p);
+  // テクスチャなしの漆黒。フォグに溶けてシルエットだけが浮かぶ
+  const mat = new THREE.MeshStandardMaterial({ color: '#04070b', roughness: 1, metalness: 0 });
+  applySwim(mat, def.id, p, 'sway', false);
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(geo, mat));
+  // 微かに光る目だけが見える
+  const eyeMat = new THREE.MeshStandardMaterial({
+    color: '#0a0e12', emissive: '#6a8a96', emissiveIntensity: 0.9, roughness: 0.4,
+  });
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(L * 0.008, 8, 6), eyeMat);
+    eye.position.set(side * L * 0.045, L * 0.03, L * 0.42);
+    g.add(eye);
+  }
+  const phase = rand(0, Math.PI * 2);
+  return {
+    object: g,
+    update: (dt, t) => {
+      // まばたきのように時折光が消える
+      const blink = Math.sin(t * 0.35 + phase) > -0.92 ? 0.9 : 0.05;
+      eyeMat.emissiveIntensity += (blink - eyeMat.emissiveIntensity) * (1 - Math.exp(-dt * 6));
+    },
+  };
+}
+
+/** チンアナゴのコロニー。近づくと砂に引っ込む */
+function buildGardenEel(def: SpeciesDef): SpecialCreature {
+  const g = new THREE.Group();
+  // 白地に黒斑の体
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 128;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#e8e2d2';
+  ctx.fillRect(0, 0, 64, 128);
+  ctx.fillStyle = '#22201c';
+  for (let i = 0; i < 14; i++) {
+    ctx.beginPath();
+    ctx.arc(rand(4, 60), rand(4, 124), rand(2, 5), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7 });
+
+  const bodyGeo = new THREE.CylinderGeometry(0.012, 0.02, 1, 6, 8);
+  {
+    // 上部をゆるく前傾させる(潮上を向く姿勢)
+    const pos = bodyGeo.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      const y01 = (pos.getY(i) + 0.5);
+      pos.setX(i, pos.getX(i) + y01 * y01 * 0.16);
+    }
+    bodyGeo.translate(0, 0.5, 0);
+    bodyGeo.computeVertexNormals();
+  }
+  const eels: { pivot: THREE.Object3D; ph: number; h: number; cur: number }[] = [];
+  const scl = def.length / 0.35;
+  for (let i = 0; i < 14; i++) {
+    const pivot = new THREE.Group();
+    const mesh = new THREE.Mesh(bodyGeo, mat);
+    pivot.add(mesh);
+    const a = rand(0, Math.PI * 2);
+    const rr = rand(0.2, 1.4) * scl;
+    pivot.position.set(Math.cos(a) * rr, 0, Math.sin(a) * rr);
+    pivot.rotation.y = rand(0, Math.PI * 2);
+    const h = rand(0.55, 0.95) * scl;
+    pivot.scale.setScalar(h);
+    g.add(pivot);
+    eels.push({ pivot, ph: rand(0, Math.PI * 2), h, cur: h });
+  }
+  return {
+    object: g,
+    update: (dt, t, playerDist) => {
+      // 接近すると砂に引っ込む(スケールYを縮める)
+      const target = playerDist < 3.5 ? 0.05 : 1;
+      for (const e of eels) {
+        e.cur += (target * e.h - e.cur) * (1 - Math.exp(-dt * (target < 1 ? 8 : 1.6)));
+        e.pivot.scale.y = Math.max(e.cur, 0.02);
+        e.pivot.rotation.z = Math.sin(t * 1.3 + e.ph) * 0.1;
+        e.pivot.rotation.x = Math.cos(t * 1.1 + e.ph * 1.7) * 0.08;
+      }
+    },
+  };
+}
+
+/** クリオネ(流氷の天使)。翼足をはばたかせて浮遊する */
+function buildClione(def: SpeciesDef): SpecialCreature {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({
+    color: '#e8ecf2', transparent: true, opacity: 0.55, roughness: 0.3,
+    emissive: '#b8c8e0', emissiveIntensity: 0.25, depthWrite: false,
+  });
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.032, 10, 8), bodyMat);
+  body.scale.set(0.7, 1.5, 0.7);
+  g.add(body);
+  // 内臓の赤橙の光(クリオネの象徴)
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(0.014, 8, 6),
+    new THREE.MeshStandardMaterial({ color: '#8a2a10', emissive: '#ff5a28', emissiveIntensity: 1.6 })
+  );
+  core.position.y = -0.008;
+  g.add(core);
+  // 頭の小さな角
+  const hornMat = new THREE.MeshStandardMaterial({ color: '#d8dee8', transparent: true, opacity: 0.7 });
+  for (const side of [-1, 1]) {
+    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.005, 0.02, 5), hornMat);
+    horn.position.set(side * 0.01, 0.055, 0);
+    horn.rotation.z = side * -0.4;
+    g.add(horn);
+  }
+  // 翼足
+  const wingGeo = new THREE.CircleGeometry(0.03, 8);
+  wingGeo.scale(1.4, 0.7, 1);
+  const wingMat = new THREE.MeshStandardMaterial({
+    color: '#f0f4f8', transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false,
+  });
+  const wings: THREE.Mesh[] = [];
+  for (const side of [-1, 1]) {
+    const wing = new THREE.Mesh(wingGeo, wingMat);
+    wing.position.set(side * 0.028, 0.008, 0);
+    g.add(wing);
+    wings.push(wing);
+  }
+  g.scale.setScalar(def.length / 0.08);
+  const phase = rand(0, Math.PI * 2);
+  return {
+    object: g,
+    update: (dt, t) => {
+      const flap = Math.sin(t * 4.2 + phase);
+      wings[0].rotation.y = -0.5 - flap * 0.75;
+      wings[1].rotation.y = 0.5 + flap * 0.75;
+      g.position.y += Math.sin(t * 2.1 + phase) * 0.0006;
+    },
+  };
 }
 
 function buildWhale(def: SpeciesDef): SpecialCreature {
   const L = def.length;
+  const isBlue = def.id === 'blue_whale';
   const p = resolveParams({
-    base: '#39434f', belly: '#e2e9ed', height: 0.26, width: 0.2, noseK: 0.6,
-    tailSpan: 0.36, tailLen: 0.16, dorsalH: 0.035, eyeScale: 0.4, eyeX: 0.13,
-    finColor: '#dfe8ec', swimFreq: 0.85, swimAmp: L * 0.035, roughness: 0.6, metalness: 0.05,
+    base: isBlue ? '#5e7486' : '#39434f',
+    belly: isBlue ? '#c4ced6' : '#e2e9ed',
+    height: isBlue ? 0.2 : 0.26, width: isBlue ? 0.17 : 0.2, noseK: isBlue ? 0.48 : 0.6,
+    tailSpan: 0.36, tailLen: 0.16, dorsalH: isBlue ? 0.018 : 0.035,
+    eyeScale: isBlue ? 0.28 : 0.4, eyeX: 0.13, scales: false,
+    pattern: isBlue ? { kind: 'speckle', color: '#8ba2b2' } : undefined,
+    finColor: '#dfe8ec', swimFreq: isBlue ? 0.6 : 0.85, swimAmp: L * 0.035,
+    roughness: 0.6, metalness: 0.05,
   }, L);
   p.flukeH = true;
-  p.longPectorals = 0.3;
+  p.longPectorals = isBlue ? 0.11 : 0.3;
   const mesh = new THREE.Mesh(makeFishGeometry(p), makeFishMaterial(p, def.id, 'vsway', false));
   return { object: mesh };
 }
 
 function buildRay(def: SpeciesDef): SpecialCreature {
-  const p = resolveParams({ ...def.fish!, tailSpan: 0.07, tailLen: 0.3, dorsalH: 0 }, def.length);
+  const p = resolveParams({ ...def.fish!, tailSpan: 0.07, tailLen: 0.3, dorsalH: 0, analH: 0 }, def.length);
   const geo = makeFishGeometry(p);
   const mat = makeFishMaterial(p, def.id, 'flap', false);
   const mesh = new THREE.Mesh(geo, mat);
@@ -174,8 +400,9 @@ function buildCombJelly(def: SpeciesDef): SpecialCreature {
 
 function buildAngler(def: SpeciesDef): SpecialCreature {
   const p = resolveParams({
-    base: '#191114', belly: '#261a1e', height: 0.58, width: 0.32,
-    noseK: 0.5, tailSpan: 0.28, swimFreq: 2.2, roughness: 0.8, metalness: 0,
+    base: '#191114', belly: '#261a1e', height: 0.58, width: 0.32, scales: false,
+    noseK: 0.5, tailSpan: 0.28, tailFork: 0.15, eyeScale: 1.2, eyeColor: '#8898a8',
+    swimFreq: 2.2, roughness: 0.8, metalness: 0,
   }, def.length);
   const g = new THREE.Group();
   g.add(new THREE.Mesh(makeFishGeometry(p), makeFishMaterial(p, def.id, 'sway', false)));

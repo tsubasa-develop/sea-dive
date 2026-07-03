@@ -11,7 +11,6 @@ export interface DexEntry {
 
 export class UI {
   onStart?: () => void;
-  onStartDebug?: () => void;
   onResetProgress?: () => void;
   onDeletePhoto?: (id: string) => void;
   onModalClosed?: () => void;
@@ -26,6 +25,7 @@ export class UI {
     root.insertAdjacentHTML('beforeend', `
       <div id="vignette"></div>
       <div id="flash"></div>
+      <div id="damage"></div>
       <div id="hud" class="hidden">
         <div id="hud-topleft">
           <div id="hud-depth">0<span class="unit">m</span></div>
@@ -36,10 +36,10 @@ export class UI {
           <div id="hud-dex">図鑑 0 / ${SPECIES.length}</div>
           <div id="hud-light" class="hidden">🔦 ライトON</div>
         </div>
-        <div id="hud-debug" class="hidden">DEBUG · 1/2/3 テレポート · E イベント召喚</div>
+        <div id="hud-debug" class="hidden">1/2/3 テレポート · E イベント召喚 · G サメ襲撃</div>
         <div id="hud-dot"></div>
         <div id="toasts"></div>
-        <div id="hud-hints">WASD 移動 · SPACE 浮上 · SHIFT 潜行 · <b>C カメラ</b> · TAB 図鑑 · P アルバム · F ライト · M 音</div>
+        <div id="hud-hints">左ドラッグ 視点 · WASD 移動 · SPACE 浮上 · SHIFT 潜行 · <b>C カメラ</b> · TAB 図鑑 · P アルバム · F ライト · M 音 · ESC ポーズ</div>
       </div>
       <div id="camera-ui" class="hidden">
         <div class="cam-corner tl"></div><div class="cam-corner tr"></div>
@@ -49,7 +49,7 @@ export class UI {
         <div id="cam-label">● REC 撮影モード</div>
         <div id="cam-target"></div>
         <div id="cam-zoom"><div id="cam-zoom-fill"></div></div>
-        <div id="cam-hints">クリック シャッター · ホイール ズーム · C 終了</div>
+        <div id="cam-hints">クリック シャッター · ドラッグ 視点 · ホイール ズーム · C 終了</div>
       </div>
       <div id="result-card" class="hidden"></div>
       <div id="unlock-banner" class="hidden"></div>
@@ -78,17 +78,18 @@ export class UI {
           <p id="title-sub">未知の海を潜り、生き物を撮影して図鑑を完成させよう</p>
           <h1>Sea Dive<span>蒼の図鑑</span></h1>
           <div id="title-controls">
-            <div><b>移動</b>WASD + マウス視点</div>
+            <div><b>視点</b>左ドラッグ</div>
+            <div><b>移動</b>WASD / 矢印キー</div>
             <div><b>浮上 / 潜行</b>SPACE / SHIFT</div>
             <div><b>カメラ構える</b>C</div>
-            <div><b>シャッター</b>左クリック</div>
+            <div><b>シャッター</b>クリック(カメラ中)</div>
             <div><b>図鑑 / アルバム</b>TAB / P</div>
             <div><b>水中ライト</b>F(深海で必須)</div>
+            <div><b>ポーズ</b>ESC</div>
           </div>
           <button id="btn-start">クリックしてダイブ開始</button>
-          <p id="title-note">深く潜るには図鑑の登録数が必要です。まずはサンゴ礁の生き物から。</p>
+          <p id="title-note">全深度を自由に探索できます。深海や沖には「何か」が潜んでいるかもしれません。</p>
         </div>
-        <button id="btn-debug" title="開発者向け: 生物が高頻度で出現します">dev</button>
       </div>
     `);
 
@@ -97,11 +98,10 @@ export class UI {
       'hud', 'hud-depth', 'hud-zone', 'hud-limit', 'hud-dex', 'hud-light', 'hud-debug', 'toasts',
       'camera-ui', 'cam-target', 'cam-zoom-fill', 'result-card', 'unlock-banner',
       'modal-dex', 'dex-grid', 'dex-count', 'modal-album', 'album-grid', 'album-count',
-      'photo-viewer', 'title-screen', 'flash',
+      'photo-viewer', 'title-screen', 'flash', 'damage',
     ]) this.el[id] = q(id);
 
     q('btn-start').addEventListener('click', () => this.onStart?.());
-    q('btn-debug').addEventListener('click', () => this.onStartDebug?.());
     q('dex-reset').addEventListener('click', () => {
       if (confirm('図鑑と進行状況をリセットしますか?(写真は残ります)')) this.onResetProgress?.();
     });
@@ -164,6 +164,14 @@ export class UI {
     f.classList.add('active');
   }
 
+  /** サメ被弾時の赤いフラッシュ */
+  damage(): void {
+    const d = this.el['damage'];
+    d.classList.remove('active');
+    void d.offsetWidth;
+    d.classList.add('active');
+  }
+
   // ─────────── 撮影結果 ───────────
   showResult(res: ShotResult): void {
     const card = this.el['result-card'];
@@ -185,13 +193,14 @@ export class UI {
     this.resultTimer = window.setTimeout(() => card.classList.add('hidden'), 5500);
   }
 
-  toast(msg: string, kind: 'info' | 'rare' | 'new' | 'warn' = 'info'): void {
+  toast(msg: string, kind: 'info' | 'rare' | 'new' | 'warn' | 'danger' = 'info'): void {
     const div = document.createElement('div');
     div.className = `toast toast-${kind}`;
     div.textContent = msg;
     this.el['toasts'].appendChild(div);
-    window.setTimeout(() => div.classList.add('out'), kind === 'rare' ? 6000 : 3800);
-    window.setTimeout(() => div.remove(), kind === 'rare' ? 6600 : 4400);
+    const long = kind === 'rare' || kind === 'danger';
+    window.setTimeout(() => div.classList.add('out'), long ? 6000 : 3800);
+    window.setTimeout(() => div.remove(), long ? 6600 : 4400);
   }
 
   unlockBanner(label: string, limit: number): void {
