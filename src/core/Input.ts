@@ -7,6 +7,8 @@ export class Input {
   keys = new Set<string>();
   /** 左ボタンを押してドラッグ中か */
   dragging = false;
+  /** 画面上のマウス位置(px)。水中ライトの照準に使う */
+  pointer = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
   onShoot?: () => void;
   onWheel?: (dy: number) => void;
   onKey?: (code: string) => void;
@@ -37,6 +39,8 @@ export class Input {
       canvas.classList.add('dragging');
     });
     window.addEventListener('mousemove', (e) => {
+      this.pointer.x = e.clientX;
+      this.pointer.y = e.clientY;
       if (!this.dragging) return;
       this.dx += e.movementX;
       this.dy += e.movementY;

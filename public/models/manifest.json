@@ -1,0 +1,4 @@
+{
+  "great_white": { "file": "great_white.glb" },
+  "green_turtle": { "file": "green_turtle.glb", "yaw": 3.14159, "noSwim": true }
+}

@@ -2,9 +2,11 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Ambience } from '../audio/Ambience';
 import { CreatureManager } from '../creatures/CreatureManager';
+import { initModelLibrary } from '../creatures/ModelLibrary';
 import { SPECIES } from '../creatures/SpeciesData';
 import { PhotoSystem } from '../photo/PhotoSystem';
 import { AlbumStore } from '../state/AlbumStore';
@@ -46,10 +48,13 @@ export class Game {
   private paused = false;
   private shooting = false;
   private shakeT = 0;
+  /** サメの被弾数。2回で死亡 */
+  private sharkHits = 0;
+  private dead = false;
 
   /** 探索操作を受け付ける状態か */
   private get playing(): boolean {
-    return this.started && !this.paused && !this.ui.modalOpen;
+    return this.started && !this.paused && !this.dead && !this.ui.modalOpen;
   }
 
   constructor(root: HTMLElement) {
@@ -63,12 +68,22 @@ export class Game {
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 500);
     this.scene.add(this.camera); // フラッシュライトをぶら下げるため
 
+    // GLBモデル置き換え(public/models/manifest.json に登録された種)
+    initModelLibrary(this.renderer);
+
     this.env = new Environment(this.scene, this.camera, this.renderer);
     this.scene.add(createTerrain());
 
-    // ポストプロセス: 発光体(クラゲ・深海生物・水面のきらめき)に淡いブルーム
-    this.composer = new EffectComposer(this.renderer);
+    // ポストプロセス: MSAA付きレンダーターゲット + GTAO(環境遮蔽) + 淡いブルーム
+    const bufSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    const rt = new THREE.WebGLRenderTarget(bufSize.x, bufSize.y, {
+      samples: 4, type: THREE.HalfFloatType,
+    });
+    this.composer = new EffectComposer(this.renderer, rt);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
+    const gtao = new GTAOPass(this.scene, this.camera, bufSize.x, bufSize.y);
+    gtao.updateGtaoMaterial({ radius: 0.6, scale: 1.2, thickness: 1.2 });
+    this.composer.addPass(gtao);
     this.composer.addPass(new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight), 0.46, 0.55, 0.82
     ));
@@ -126,16 +141,32 @@ export class Game {
       this.ambience.danger();
     };
     this.manager.onPredatorHit = (dir) => {
+      if (this.dead) return;
       // ノックバック + 赤フラッシュ + シェイク
       this.player.velocity.addScaledVector(dir, 9);
       this.player.velocity.y += 2.2;
       this.ui.damage();
       this.ambience.bite();
       this.shakeT = 0.7;
+      this.sharkHits++;
+      if (this.sharkHits >= 2) {
+        this.die();
+      } else {
+        this.ui.setInjury(true);
+        this.ui.toast('重傷だ…! もう一度噛まれたらもたない', 'danger');
+      }
     };
     this.manager.onPredatorGone = (escaped) => {
+      if (this.dead) return;
       this.ui.toast(escaped ? 'サメは深みへ消えていった…助かった' : 'サメは興味を失い、去っていった', 'info');
+      // 生き延びれば傷は癒える
+      if (this.sharkHits > 0) {
+        this.sharkHits = 0;
+        this.ui.setInjury(false);
+        this.ui.toast('傷はなんとか塞がりそうだ', 'info');
+      }
     };
+    this.ui.onRespawn = () => window.location.reload();
     this.player.onLimitWarn = () => {
       this.ui.toast(`これ以上は潜れない(可潜深度 ${this.player.depthLimit}m)。図鑑を増やして解放しよう`, 'warn');
     };
@@ -151,8 +182,20 @@ export class Game {
     };
   }
 
+  /** サメに2回噛まれた — 死亡してリスタート待ち */
+  private die(): void {
+    this.dead = true;
+    if (this.photo.active) this.exitPhotoMode();
+    this.ui.closeModals();
+    this.ambience.death();
+    this.ui.showDeath();
+    this.shakeT = 1.2;
+    // ゆっくり沈んでいく
+    this.player.velocity.set(0, -0.6, 0);
+  }
+
   private handleKey(code: string): void {
-    if (!this.started) return;
+    if (!this.started || this.dead) return;
     if (this.playing) {
       if (code === 'Digit1') this.teleport(24, -6, 24);
       else if (code === 'Digit2') this.teleport(0, -52, 122);
@@ -293,6 +336,13 @@ export class Game {
 
     const bg = this.env.update(pos);
     this.scene.background = bg;
+    // 水中ライトはマウスカーソルの方向を照らす
+    this.env.aimFlashlight(
+      dt,
+      (this.input.pointer.x / window.innerWidth) * 2 - 1,
+      -(this.input.pointer.y / window.innerHeight) * 2 + 1,
+      this.camera
+    );
     this.particles.update(dt, pos);
     this.manager.update(dt, t, pos, this.player.speed);
     this.ambience.setDepth(depth);

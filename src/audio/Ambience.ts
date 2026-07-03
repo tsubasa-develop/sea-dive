@@ -158,6 +158,22 @@ export class Ambience {
     this.tone(38, 0, 0.7, 0.3, 'sine');
   }
 
+  /** 死亡(沈んでいく低音) */
+  death(): void {
+    if (!this.ctx || !this.master) return;
+    const t0 = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.frequency.setValueAtTime(110, t0);
+    osc.frequency.exponentialRampToValueAtTime(26, t0 + 3.2);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.22, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 3.4);
+    osc.connect(g).connect(this.master);
+    osc.start(t0);
+    osc.stop(t0 + 3.5);
+    this.noiseBurst(0, 1.6, 120, 0.7, 0.25);
+  }
+
   toggleMute(): boolean {
     this.muted = !this.muted;
     if (this.master && this.ctx) {

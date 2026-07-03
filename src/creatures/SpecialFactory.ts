@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { rand } from '../core/noise';
 import { applySwim, fishMesh, makeFishGeometry, makeFishMaterial, resolveParams } from './FishFactory';
+import { attachModel } from './ModelLibrary';
 import type { SpeciesDef } from './SpeciesData';
 
 export interface SpecialCreature {
@@ -9,7 +10,32 @@ export interface SpecialCreature {
   update?: (dt: number, t: number, playerDist: number) => void;
 }
 
+/**
+ * 生物を生成する。まず手続き生成モデルを返し、
+ * manifest にGLBモデルが登録されていれば読み込み完了時に差し替える。
+ */
 export function buildSpecial(def: SpeciesDef): SpecialCreature {
+  const base = buildProcedural(def);
+  const group = new THREE.Group();
+  group.add(base.object);
+  let mixer: THREE.AnimationMixer | null = null;
+  let swapped = false;
+  attachModel(def, (loaded) => {
+    group.remove(base.object);
+    group.add(loaded.object);
+    mixer = loaded.mixer ?? null;
+    swapped = true;
+  });
+  return {
+    object: group,
+    update: (dt, t, playerDist) => {
+      if (swapped) mixer?.update(dt);
+      else base.update?.(dt, t, playerDist);
+    },
+  };
+}
+
+function buildProcedural(def: SpeciesDef): SpecialCreature {
   switch (def.builder) {
     case 'fish': return { object: fishMesh(def) };
     case 'ray': return buildRay(def);

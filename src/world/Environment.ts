@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { clamp, smoothstep } from '../core/noise';
 import { uTime } from '../core/uniforms';
 
+const _aimTmp = new THREE.Vector3();
+const FLASHLIGHT_INTENSITY = 15;
+
 // 深度帯ごとの水の色
 const WATER_SHALLOW = new THREE.Color('#15628c');
 const WATER_MID = new THREE.Color('#0b3d63');
@@ -42,8 +45,8 @@ export class Environment {
     scene.environment = this.makeEnvMap(renderer);
     scene.environmentIntensity = 0.55;
 
-    // 水中ライト(Fキー)。深海探索の必需品
-    this.flashlight = new THREE.SpotLight('#e8f4ff', 0, 70, 0.54, 0.55, 0);
+    // 水中ライト(Fキー)。深海探索の必需品。マウスカーソルの方向を照らす
+    this.flashlight = new THREE.SpotLight('#e8f4ff', 0, 90, 0.6, 0.5, 0);
     this.flashlight.position.set(0.25, -0.2, 0);
     this.flashlight.visible = false;
     camera.add(this.flashlight);
@@ -248,9 +251,17 @@ export class Environment {
     return this.bgColor;
   }
 
+  /** ライトをマウスカーソルの方向へ向ける(カメラローカル、滑らかに追従) */
+  aimFlashlight(dt: number, ndcX: number, ndcY: number, camera: THREE.PerspectiveCamera): void {
+    const tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    _aimTmp.set(ndcX * tanH * camera.aspect, ndcY * tanH, -1).normalize();
+    const target = this.flashlight.target.position;
+    target.lerp(_aimTmp.multiplyScalar(12), 1 - Math.exp(-dt * 12));
+  }
+
   toggleFlashlight(): boolean {
     this.flashlight.visible = !this.flashlight.visible;
-    this.flashlight.intensity = this.flashlight.visible ? 6.5 : 0;
+    this.flashlight.intensity = this.flashlight.visible ? FLASHLIGHT_INTENSITY : 0;
     return this.flashlight.visible;
   }
 }

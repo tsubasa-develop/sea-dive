@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { SPECIES, SPECIES_BY_ID, ZONE_RADIUS, type SpeciesDef } from './SpeciesData';
-import { fishInstanced, fishMesh } from './FishFactory';
+import { fishInstanced } from './FishFactory';
 import { buildSpecial, type SpecialCreature } from './SpecialFactory';
 import { heightAt } from '../world/Terrain';
 import { clamp, fbm2, pick, rand, randInt } from '../core/noise';
@@ -57,7 +57,7 @@ type PredatorPhase = 'stalk' | 'charge' | 'retreat' | 'leave';
 
 interface PredatorState {
   def: SpeciesDef;
-  mesh: THREE.Mesh;
+  special: SpecialCreature;
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   quat: THREE.Quaternion;
@@ -121,7 +121,7 @@ export class CreatureManager {
   // ─── サメ襲撃 ───
   private predator: PredatorState | null = null;
   private predatorRoll = 20;
-  private predatorCooldown = 75; // 開始直後は襲われない
+  private predatorCooldown = 150; // 開始直後は襲われない
   onPredatorWarn?: (def: SpeciesDef) => void;
   /** ヒット時。dir はサメ→プレイヤー方向(ノックバックに使う) */
   onPredatorHit?: (dir: THREE.Vector3) => void;
@@ -215,7 +215,7 @@ export class CreatureManager {
     this.predatorCooldown = Math.max(0, this.predatorCooldown - dt);
     this.predatorRoll -= dt;
     if (this.predatorRoll > 0) return;
-    this.predatorRoll = 8;
+    this.predatorRoll = 12;
     if (this.predator || this.predatorCooldown > 0) return;
 
     const depth = -playerPos.y;
@@ -223,7 +223,8 @@ export class CreatureManager {
     const inDeep = depth > 78;
     const inFar = r > 185 && depth > 18;
     if (!inDeep && !inFar) return;
-    const chance = this.debugMode ? 0.55 : inDeep && inFar ? 0.09 : 0.045;
+    // 低確率(危険地帯に12秒ごとに判定)。Gキーで即時テストできる
+    const chance = inDeep && inFar ? 0.05 : 0.025;
     if (Math.random() > chance) return;
     this.spawnPredator(playerPos);
   }
@@ -236,7 +237,7 @@ export class CreatureManager {
 
   private spawnPredator(playerPos: THREE.Vector3): SpeciesDef {
     const def = SPECIES_BY_ID.get('great_white')!;
-    const mesh = fishMesh(def);
+    const special = buildSpecial(def);
     const angle = rand(0, Math.PI * 2);
     const orbitR = 44;
     // サメは下方から現れる
@@ -245,10 +246,10 @@ export class CreatureManager {
       Math.max(playerPos.y - 9, heightAt(playerPos.x, playerPos.z) + 2),
       playerPos.z + Math.sin(angle) * orbitR
     );
-    mesh.position.copy(pos);
-    this.scene.add(mesh);
+    special.object.position.copy(pos);
+    this.scene.add(special.object);
     this.predator = {
-      def, mesh, pos,
+      def, special, pos,
       vel: new THREE.Vector3(), quat: new THREE.Quaternion(),
       phase: 'stalk', timer: rand(9, 14), orbitR, angle,
       attacks: 0, maxAttacks: randInt(2, 3), hitCd: 0,
@@ -275,10 +276,10 @@ export class CreatureManager {
     p.hitCd = Math.max(0, p.hitCd - dt);
     const dist = p.pos.distanceTo(playerPos);
 
-    // 浅瀬のサンゴ礁まで戻れば安全
+    // 浅場へ上がる、または礁の内側へ戻ればサメは追ってこない
     const pDepth = -playerPos.y;
     const pr = Math.hypot(playerPos.x, playerPos.z);
-    if (p.phase !== 'leave' && pDepth < 26 && pr < 92) {
+    if (p.phase !== 'leave' && (pDepth < 35 || pr < 95)) {
       p.phase = 'leave';
       this.onPredatorGone?.(true);
     }
@@ -356,18 +357,24 @@ export class CreatureManager {
       quatFromDir(p.vel, _q);
       p.quat.slerp(_q, 1 - Math.exp(-dt * 3.5));
     }
-    p.mesh.position.copy(p.pos);
-    p.mesh.quaternion.copy(p.quat);
+    p.special.object.position.copy(p.pos);
+    p.special.object.quaternion.copy(p.quat);
+    p.special.update?.(dt, 0, dist);
   }
 
   private despawnPredator(): void {
     const p = this.predator;
     if (!p) return;
-    this.scene.remove(p.mesh);
-    p.mesh.geometry.dispose();
-    (p.mesh.material as THREE.Material).dispose();
+    this.scene.remove(p.special.object);
+    p.special.object.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) mat.forEach((mm) => mm.dispose());
+      else mat?.dispose();
+    });
     this.predator = null;
-    this.predatorCooldown = this.debugMode ? 20 : 150;
+    this.predatorCooldown = 300; // 一度襲われたらしばらくは安全
   }
 
   // ─────────── 群れ(Boids) ───────────

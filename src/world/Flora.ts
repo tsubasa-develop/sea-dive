@@ -45,6 +45,45 @@ function placeOnPatches(
   return spots;
 }
 
+/**
+ * 実写テクスチャのトライプラナー投影(岩・遺跡用)。
+ * UVを持たないジオメトリにワールド空間から貼り、頂点カラー/マテリアル色と乗算する。
+ */
+function applyTriplanar(mat: THREE.Material, tex: THREE.Texture, scale: number, key: string): void {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.tTri = { value: tex };
+    sh.vertexShader =
+      'varying vec3 vTriP;\nvarying vec3 vTriN;\n' +
+      sh.vertexShader.replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        #ifdef USE_INSTANCING
+          vTriP = (instanceMatrix * vec4(transformed, 1.0)).xyz;
+          vTriN = mat3(instanceMatrix) * normal;
+        #else
+          vTriP = transformed;
+          vTriN = normal;
+        #endif`
+      );
+    sh.fragmentShader =
+      'uniform sampler2D tTri;\nvarying vec3 vTriP;\nvarying vec3 vTriN;\n' +
+      sh.fragmentShader.replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        {
+          vec3 nrm = normalize(vTriN);
+          vec3 bw = abs(nrm);
+          bw /= (bw.x + bw.y + bw.z);
+          vec3 c = texture2D(tTri, vTriP.zy * ${scale.toFixed(3)}).rgb * bw.x
+                 + texture2D(tTri, vTriP.xz * ${scale.toFixed(3)}).rgb * bw.y
+                 + texture2D(tTri, vTriP.xy * ${scale.toFixed(3)}).rgb * bw.z;
+          diffuseColor.rgb *= mix(vec3(dot(c, vec3(0.3333))), c, 0.55) * 2.2;
+        }`
+      );
+  };
+  mat.customProgramCacheKey = () => 'triplanar-' + key;
+}
+
 /** 揺らぎシェーダー(海藻・イソギンチャク等)。高さに応じて先端ほど揺れる */
 function applySway(mat: THREE.Material, key: string, amp: number, freq: number, height: number): void {
   mat.onBeforeCompile = (sh) => {
@@ -512,8 +551,16 @@ export class Flora {
   colliders: Collider[] = [];
   /** 遺構などの見どころ(デバッグ・検証用) */
   landmarks: { kind: string; pos: THREE.Vector3 }[] = [];
+  private rockTex!: THREE.Texture;
 
   constructor(scene: THREE.Scene) {
+    // 実写岩テクスチャ(Poly Haven CC0)
+    const rockTex = new THREE.TextureLoader().load('textures/rock.jpg');
+    rockTex.wrapS = rockTex.wrapT = THREE.RepeatWrapping;
+    rockTex.colorSpace = THREE.SRGBColorSpace;
+    rockTex.anisotropy = 8;
+    this.rockTex = rockTex;
+
     // サンゴの根(パッチ)の中心。礁の賑わいはここに集中する
     const patches = this.patches;
     for (let i = 0; i < 44; i++) {
@@ -533,6 +580,7 @@ export class Flora {
       rockGeo.computeVertexNormals();
     }
     const rockMat = new THREE.MeshStandardMaterial({ roughness: 1 });
+    applyTriplanar(rockMat, rockTex, 0.3, 'rock');
     scene.add(makeInstanced(rockGeo, rockMat, placeOnFloor(450, 16, 252), {
       scale: [0.4, 2.8], sink: 0.5, squash: true, palette: ['#5a646c', '#4a545e', '#6a6f66', '#3e4850'],
       collide: { list: this.colliders, r: 0.85 },
@@ -775,8 +823,10 @@ export class Flora {
   /** 崩れた石柱の環 + アーチ。淡い光の玉が漂う */
   private buildRuins(at: THREE.Vector3): THREE.Group {
     const g = new THREE.Group();
-    const stone = new THREE.MeshStandardMaterial({ color: '#7d8378', roughness: 1 });
-    const stoneDark = new THREE.MeshStandardMaterial({ color: '#63695f', roughness: 1 });
+    const stone = new THREE.MeshStandardMaterial({ color: '#9aa096', roughness: 1 });
+    const stoneDark = new THREE.MeshStandardMaterial({ color: '#7d827a', roughness: 1 });
+    applyTriplanar(stone, this.rockTex, 0.55, 'ruin-stone');
+    applyTriplanar(stoneDark, this.rockTex, 0.55, 'ruin-stone-dark');
     const ringR = rand(5.5, 8);
     const n = randInt(6, 9);
     for (let i = 0; i < n; i++) {
@@ -859,7 +909,8 @@ export class Flora {
   /** 海底谷の入り口にそびえる石の門 */
   private buildGate(at: THREE.Vector3, canyonAng: number): THREE.Group {
     const g = new THREE.Group();
-    const stone = new THREE.MeshStandardMaterial({ color: '#6e7570', roughness: 1 });
+    const stone = new THREE.MeshStandardMaterial({ color: '#8b928c', roughness: 1 });
+    applyTriplanar(stone, this.rockTex, 0.4, 'gate-stone');
     const H = 13;
     const HALF = 4.2;
     for (const side of [-1, 1]) {

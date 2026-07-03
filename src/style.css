@@ -41,6 +41,35 @@ html, body {
 #damage.active { animation: damageAnim 0.9s ease-out; }
 @keyframes damageAnim { 0% { opacity: 1; } 55% { opacity: 0.65; } 100% { opacity: 0; } }
 
+/* 重傷状態(次の被弾で死亡)の脈打つ赤いビネット */
+#injury {
+  position: fixed; inset: 0; pointer-events: none; z-index: 38; opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 52%, rgba(170, 12, 6, 0.5) 100%);
+  transition: opacity 0.8s;
+}
+#injury.active { opacity: 1; animation: injuryPulse 2.2s ease-in-out infinite; }
+@keyframes injuryPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+/* 死亡画面 */
+#death-screen {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  background: radial-gradient(ellipse at center, rgba(60, 4, 2, 0.85), rgba(0, 0, 0, 0.97));
+  animation: deathIn 1.6s ease-out;
+}
+@keyframes deathIn { 0% { opacity: 0; } 100% { opacity: 1; } }
+#death-inner h2 {
+  font-size: 44px; font-weight: 200; letter-spacing: 12px; color: #ff8a78;
+  text-shadow: 0 0 34px rgba(255, 60, 30, 0.55);
+}
+#death-inner p { margin-top: 16px; font-size: 13px; color: rgba(223, 243, 250, 0.7); letter-spacing: 2px; }
+#btn-respawn {
+  margin-top: 30px; font-size: 16px; padding: 13px 40px; letter-spacing: 3px; border-radius: 40px;
+  background: rgba(255, 90, 60, 0.14); color: #ffd8d0; border: 1px solid rgba(255, 120, 90, 0.5);
+  cursor: pointer; font-family: inherit;
+}
+#btn-respawn:hover { background: rgba(255, 90, 60, 0.3); }
+
 /* ─── HUD ─── */
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
 #hud-topleft { position: absolute; top: 22px; left: 26px; }

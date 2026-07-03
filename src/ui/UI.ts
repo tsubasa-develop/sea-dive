@@ -11,6 +11,7 @@ export interface DexEntry {
 
 export class UI {
   onStart?: () => void;
+  onRespawn?: () => void;
   onResetProgress?: () => void;
   onDeletePhoto?: (id: string) => void;
   onModalClosed?: () => void;
@@ -26,6 +27,14 @@ export class UI {
       <div id="vignette"></div>
       <div id="flash"></div>
       <div id="damage"></div>
+      <div id="injury"></div>
+      <div id="death-screen" class="hidden">
+        <div id="death-inner">
+          <h2>深海に呑まれた…</h2>
+          <p>撮影した写真と図鑑の記録は失われません。</p>
+          <button id="btn-respawn">新しい海で再スタート</button>
+        </div>
+      </div>
       <div id="hud" class="hidden">
         <div id="hud-topleft">
           <div id="hud-depth">0<span class="unit">m</span></div>
@@ -98,10 +107,11 @@ export class UI {
       'hud', 'hud-depth', 'hud-zone', 'hud-limit', 'hud-dex', 'hud-light', 'hud-debug', 'toasts',
       'camera-ui', 'cam-target', 'cam-zoom-fill', 'result-card', 'unlock-banner',
       'modal-dex', 'dex-grid', 'dex-count', 'modal-album', 'album-grid', 'album-count',
-      'photo-viewer', 'title-screen', 'flash', 'damage',
+      'photo-viewer', 'title-screen', 'flash', 'damage', 'injury', 'death-screen',
     ]) this.el[id] = q(id);
 
     q('btn-start').addEventListener('click', () => this.onStart?.());
+    q('btn-respawn').addEventListener('click', () => this.onRespawn?.());
     q('dex-reset').addEventListener('click', () => {
       if (confirm('図鑑と進行状況をリセットしますか?(写真は残ります)')) this.onResetProgress?.();
     });
@@ -170,6 +180,17 @@ export class UI {
     d.classList.remove('active');
     void d.offsetWidth;
     d.classList.add('active');
+  }
+
+  /** 重傷状態(次の被弾で死亡)の常時ビネット */
+  setInjury(on: boolean): void {
+    this.el['injury'].classList.toggle('active', on);
+  }
+
+  /** 死亡画面 */
+  showDeath(): void {
+    this.setInjury(false);
+    this.el['death-screen'].classList.remove('hidden');
   }
 
   // ─────────── 撮影結果 ───────────

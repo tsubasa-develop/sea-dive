@@ -162,21 +162,51 @@ export function createTerrain(): THREE.Mesh {
     roughness: 1.0,
     metalness: 0.0,
   });
-  // 浅場の海底にコースティクス(揺らめく光の網目)を焼き込む
+  // 実写PBRテクスチャ(Poly Haven CC0)。砂=真上投影、崖=トライプラナー
+  const texLoader = new THREE.TextureLoader();
+  const loadTex = (url: string): THREE.Texture => {
+    const t = texLoader.load(url);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 8;
+    return t;
+  };
+  const tSand = loadTex('textures/sand.jpg');
+  const tCliff = loadTex('textures/cliff.jpg');
+
+  // テクスチャブレンド + 浅場のコースティクス(揺らめく光の網目)を焼き込む
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = uTime;
+    sh.uniforms.tSand = { value: tSand };
+    sh.uniforms.tCliff = { value: tCliff };
     sh.vertexShader =
-      'varying vec3 vCauP;\n' +
+      'varying vec3 vCauP;\nvarying vec3 vTNrm;\n' +
       sh.vertexShader.replace(
         '#include <begin_vertex>',
-        '#include <begin_vertex>\n vCauP = position;'
+        '#include <begin_vertex>\n vCauP = position;\n vTNrm = normal;'
       );
     sh.fragmentShader =
-      'uniform float uTime;\nvarying vec3 vCauP;\n' +
+      'uniform float uTime;\nuniform sampler2D tSand;\nuniform sampler2D tCliff;\nvarying vec3 vCauP;\nvarying vec3 vTNrm;\n' +
       sh.fragmentShader.replace(
         '#include <color_fragment>',
         `#include <color_fragment>
         {
+          vec3 nrm = normalize(vTNrm);
+          vec3 bw = abs(nrm);
+          bw /= (bw.x + bw.y + bw.z);
+          // 砂: 2周波数で混ぜてタイリング感を消す
+          vec3 sandC = texture2D(tSand, vCauP.xz * 0.09).rgb;
+          sandC = mix(sandC, texture2D(tSand, vCauP.xz * 0.014).rgb, 0.45);
+          // 崖: トライプラナー投影
+          vec3 cliffC = texture2D(tCliff, vCauP.zy * 0.07).rgb * bw.x
+                      + texture2D(tCliff, vCauP.xz * 0.07).rgb * bw.y
+                      + texture2D(tCliff, vCauP.xy * 0.07).rgb * bw.z;
+          float rockW = smoothstep(0.985, 0.8, nrm.y);
+          vec3 texC = mix(sandC, cliffC, rockW);
+          // 彩度を少し落として頂点カラー(深度の色設計)と馴染ませる
+          vec3 texMix = mix(vec3(dot(texC, vec3(0.3333))), texC, 0.62);
+          diffuseColor.rgb *= texMix * 2.15;
+
           float t = uTime;
           float c1 = sin(vCauP.x * 0.9 + t * 1.1) + sin(vCauP.z * 1.1 - t * 0.9) + sin((vCauP.x + vCauP.z) * 0.6 + t * 0.6);
           float ca = pow(clamp(1.0 - abs(c1) * 0.45, 0.0, 1.0), 3.0);
@@ -187,7 +217,7 @@ export function createTerrain(): THREE.Mesh {
         }`
       );
   };
-  mat.customProgramCacheKey = () => 'terrain-caustics';
+  mat.customProgramCacheKey = () => 'terrain-caustics-tex';
 
   const mesh = new THREE.Mesh(geom, mat);
   mesh.frustumCulled = false;
